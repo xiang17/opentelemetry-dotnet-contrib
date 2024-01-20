@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Diagnostics.Tracing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -17,6 +18,7 @@ using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using Xunit;
+using Xunit.Abstractions;
 using static OpenTelemetry.Exporter.Geneva.Tests.MetricsContract;
 
 namespace OpenTelemetry.Exporter.Geneva.Tests;
@@ -24,6 +26,13 @@ namespace OpenTelemetry.Exporter.Geneva.Tests;
 #pragma warning disable CA1861 // Prefer 'static readonly' fields over constant array arguments if the called method is called repeatedly and is not mutating the passed array
 public class GenevaMetricExporterTests
 {
+    private readonly ITestOutputHelper testOutputHelper;
+
+    public GenevaMetricExporterTests(ITestOutputHelper testOutputHelper)
+    {
+        this.testOutputHelper = testOutputHelper;
+    }
+
     [Fact]
     public void NullExporterOptions()
     {
@@ -248,6 +257,115 @@ public class GenevaMetricExporterTests
                 {
                 }
             }
+        }
+    }
+
+    [Fact]
+    public async void SuccessfulExportTwiceOnWindows()
+    {
+        //using var inMemoryMeter = new Meter("InMemoryExportOnWindows", "0.0.1");
+        //var inMemoryCounter = inMemoryMeter.CreateCounter<long>("counter");
+
+        List<EventWrittenEventArgs> events = new List<EventWrittenEventArgs>();
+
+        using TestMetricEtwDataListener listener = new TestMetricEtwDataListener(eventData =>
+        {
+            events.Add(eventData);
+            for (int i = 0; i < eventData.Payload.Count; ++i)
+            {
+                object obj = eventData.Payload[i];
+                this.testOutputHelper.WriteLine($"Type is: `{obj.GetType()}`.");
+                this.testOutputHelper.WriteLine($"EventData.Payload[{i}] is: `{obj}`.");
+
+                Debug.WriteLine($"EventData.Payload[{i}] is {obj}");
+            }
+
+            //Assert.Equal("OpenTelemetryGenevaMetricExporter", eventData.EventSource.Name);
+            //Assert.Equal(1, eventData.EventId);
+            //Assert.Equal(1, eventData.Payload.Count);
+            //Assert.Equal("counter", eventData.Payload[0]);
+        });
+
+        await EmitMetrics("one");
+
+        await EmitMetrics("two");
+
+    }
+
+    private static async Task EmitMetrics(string attempt)
+    {
+        var exportedItems = new List<Metric>();
+        using var inMemoryReader = new BaseExportingMetricReader(new InMemoryExporter<Metric>(exportedItems))
+        {
+            TemporalityPreference = MetricReaderTemporalityPreference.Delta,
+        };
+
+        var MetricName = "counter_" + attempt;
+        using var meter = new Meter("MeterName", "0.0.1");
+        var counter = meter.CreateCounter<long>(MetricName);
+
+        using var meterProviderBuilder = Sdk.CreateMeterProviderBuilder()
+            .AddMeter("*")
+            .AddGenevaMetricExporter(x =>
+            {
+                x.MetricExportIntervalMilliseconds = 1000;
+                x.ConnectionString = "Account=OTelGeneva;Namespace=MeteringSample";
+            })
+            .AddReader(inMemoryReader)
+            .Build();
+        counter.Add(1);
+
+        string path = string.Empty;
+        Socket server = null;
+        try
+        {
+            inMemoryReader.Collect();
+            Assert.Single(exportedItems);
+
+            Metric metric = exportedItems[0];
+
+            Assert.Equal(MetricName, metric.Name);
+        }
+        finally
+        {
+            server?.Dispose();
+            try
+            {
+                File.Delete(path);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private class TestMetricEtwDataListener : EventListener
+    {
+        private readonly Action<EventWrittenEventArgs> eventHandler;
+
+        public TestMetricEtwDataListener(Action<EventWrittenEventArgs> eventHandler)
+        {
+            this.eventHandler = eventHandler;
+        }
+
+        protected override void OnEventSourceCreated(EventSource eventSource)
+        {
+            if (eventSource.Name == "OpenTelemetryGenevaMetricExporter")
+            {
+                this.EnableEvents(eventSource, EventLevel.Verbose);
+            }
+
+            base.OnEventSourceCreated(eventSource);
+        }
+
+        protected override void OnEventWritten(EventWrittenEventArgs eventData)
+        {
+            if (eventData.EventSource.Name != "OpenTelemetryGenevaMetricExporter")
+            {
+                return;
+            }
+
+            this.eventHandler(eventData);
         }
     }
 
