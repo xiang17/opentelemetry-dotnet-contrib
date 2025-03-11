@@ -4,6 +4,7 @@
 #if NET
 
 using System.Diagnostics;
+using System.Diagnostics.Tracing;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
@@ -38,18 +39,15 @@ internal class EventHeaderLogExporter : EventHeaderExporter, IDisposable
     private readonly Dictionary<string, string>? tableMappings;
     private readonly ValueTuple<byte[], byte[]>? repeatedPartAFields;
     private readonly ExceptionStackExportMode exceptionStackExportMode;
-
-#pragma warning disable CA2213 // Disposable fields should be disposed: it is managed and disposed in the Dispose method of EventHeaderDynamicProvider
-    private readonly EventHeaderDynamicTracepoint logsTracepoint;
-#pragma warning restore CA2213 // Disposable fields should be disposed
+    private readonly UnixUserEventsDataTransport userEventsDataTransport;
 
     private bool isDisposed;
 
     public EventHeaderLogExporter(GenevaExporterOptions options)
     {
         Guard.ThrowIfNull(options);
-
-        this.logsTracepoint = UnixUserEventsDataTransport.Instance.RegisterUserEventProviderForLogs();
+        var connectionStringBuilder = new ConnectionStringBuilder(options.ConnectionString);
+        this.userEventsDataTransport = new UnixUserEventsDataTransport(connectionStringBuilder.ProviderName);
 
         this.exceptionStackExportMode = options.ExceptionStackExportMode;
 
@@ -121,27 +119,38 @@ internal class EventHeaderLogExporter : EventHeaderExporter, IDisposable
 
     public ExportResult Export(in Batch<LogRecord> batch)
     {
-        if (this.logsTracepoint.IsEnabled)
+        var result = ExportResult.Success;
+        foreach (var logRecord in batch)
         {
-            var result = ExportResult.Success;
-            foreach (var logRecord in batch)
+            if (logRecord.LogLevel == LogLevel.None)
             {
-                try
-                {
-                    var eventBuilder = this.SerializeLogRecord(logRecord);
-                    eventBuilder.Write(this.logsTracepoint);
-                }
-                catch (Exception ex)
-                {
-                    ExporterEventSource.Log.FailedToSendLogData(ex);
-                    result = ExportResult.Failure;
-                }
+                continue;
             }
 
-            return result;
+            try
+            {
+                EventLevel eventLevel = GetEventLevel(logRecord.LogLevel);
+                EventHeaderDynamicTracepoint logsTracepoint = this.userEventsDataTransport.FindLogsTracepoint(eventLevel);
+                if (logsTracepoint.IsEnabled)
+                {
+                    var eventBuilder = this.SerializeLogRecord(logRecord);
+                    eventBuilder.Write(logsTracepoint);
+                }
+                else
+                {
+                    ExporterEventSource.Log.TracepointNotEnabled(nameof(EventHeaderLogExporter), logsTracepoint.Name, logsTracepoint.Level.ToString());
+                }
+            }
+            catch (Exception ex)
+            {
+                ExporterEventSource.Log.FailedToSendLogData(ex);
+                result = ExportResult.Failure;
+            }
         }
 
-        return ExportResult.Failure;
+        ExporterEventSource.Log.ExportCompleted(nameof(EventHeaderLogExporter));
+
+        return result;
     }
 
     public void Dispose()
@@ -155,6 +164,7 @@ internal class EventHeaderLogExporter : EventHeaderExporter, IDisposable
         {
             // DO NOT Dispose eventBuilder, keyValuePairs, and partCFields as they are static
             this.serializationData?.Dispose();
+            this.userEventsDataTransport.Dispose();
         }
         catch (Exception ex)
         {
@@ -419,6 +429,22 @@ internal class EventHeaderLogExporter : EventHeaderExporter, IDisposable
         }
 
         return eb;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static EventLevel GetEventLevel(LogLevel logLevel)
+    {
+        return logLevel switch
+        {
+            LogLevel.Trace => EventLevel.Verbose,
+            LogLevel.Debug => EventLevel.Verbose,
+            LogLevel.Information => EventLevel.Informational,
+            LogLevel.Warning => EventLevel.Warning,
+            LogLevel.Error => EventLevel.Error,
+            LogLevel.Critical => EventLevel.Critical,
+            LogLevel.None => throw new ArgumentOutOfRangeException(nameof(logLevel), "LogRecord should not have LogLevel.None as value of LogLevel."),
+            _ => EventLevel.Verbose,
+        };
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

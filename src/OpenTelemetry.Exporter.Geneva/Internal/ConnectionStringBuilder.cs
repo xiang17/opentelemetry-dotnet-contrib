@@ -78,10 +78,24 @@ internal sealed class ConnectionStringBuilder
     public bool PrivatePreviewEnableUserEvents => this.parts.TryGetValue(nameof(this.PrivatePreviewEnableUserEvents), out var value)
                 && bool.TrueString.Equals(value, StringComparison.OrdinalIgnoreCase);
 
+    public string ProviderName
+    {
+        get
+        {
+            if (!this.parts.TryGetValue(nameof(this.ProviderName), out var value))
+            {
+                throw new ArgumentException($"'{nameof(this.ProviderName)}' value is missing in connection string.");
+            }
+
+            return !value.All(c => char.IsLetterOrDigit(c) || c == '_')
+                ? throw new ArgumentException($"'{nameof(this.ProviderName)}' value must contain only ASCII letters, digits and '_'.")
+                : value;
+        }
+    }
+
     public string Endpoint
     {
         get => this.ThrowIfNotExists<string>(nameof(this.Endpoint));
-        set => this.parts[nameof(this.Endpoint)] = value;
     }
 
     public TransportProtocol Protocol

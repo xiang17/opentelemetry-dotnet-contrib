@@ -19,6 +19,7 @@ internal sealed class ExporterEventSource : EventSource
     private const int EVENT_ID_TRANSPORT_ERROR = 7; // Transport error
     private const int EVENT_ID_TRANSPORT_EXCEPTION = 8; // Transport exception
     private const int EVENT_ID_TRANSPORT_INFO = 9; // Transport info
+    private const int EVENT_ID_TRANSPORT_VERBOSE = 10; // Transport verbose
 
     [NonEvent]
     public void FailedToSendTraceData(Exception ex)
@@ -139,5 +140,11 @@ internal sealed class ExporterEventSource : EventSource
     public void TransportInformation(string transportType, string error)
     {
         this.WriteEvent(EVENT_ID_TRANSPORT_INFO, transportType, error);
+    }
+
+    [Event(EVENT_ID_TRANSPORT_VERBOSE, Message = "Transport '{0}' verbose. Message: {1}", Level = EventLevel.Verbose)]
+    public void TracepointNotEnabled(string transportType, string tracepointName, string eventLevel)
+    {
+        this.WriteEvent(EVENT_ID_TRANSPORT_VERBOSE, transportType, tracepointName, eventLevel);
     }
 }

@@ -234,4 +234,17 @@ public class ConnectionStringBuilderTests
         builder = new ConnectionStringBuilder("PrivatePreviewEnableUserEvents=false");
         Assert.False(builder.PrivatePreviewEnableUserEvents);
     }
+
+    [Fact]
+    public void ConnectionStringBuilder_PrivatePreviewEnableUserEvents_ProviderName()
+    {
+        var builder = new ConnectionStringBuilder("key1=value1");
+        Assert.False(builder.PrivatePreviewEnableUserEvents);
+        builder = new ConnectionStringBuilder("PrivatePreviewEnableUserEvents=false");
+        Assert.Throws<ArgumentException>(() => builder.ProviderName);
+        builder = new ConnectionStringBuilder("PrivatePreviewEnableUserEvents=true;ProviderName=MicrosoftOpenTelemetryLogs");
+        Assert.Equal("MicrosoftOpenTelemetryLogs", builder.ProviderName);
+        builder = new ConnectionStringBuilder("PrivatePreviewEnableUserEvents=true;ProviderName=_UnderscoreIsAllowed");
+        Assert.Equal("Underscores_Are_Allowed", builder.ProviderName);
+    }
 }

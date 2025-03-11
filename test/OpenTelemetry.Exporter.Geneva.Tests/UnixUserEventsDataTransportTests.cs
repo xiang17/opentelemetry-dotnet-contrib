@@ -3,6 +3,7 @@
 
 #if NET6_0_OR_GREATER
 
+using System.Diagnostics.Tracing;
 using System.Globalization;
 using Microsoft.LinuxTracepoints.Provider;
 using OpenTelemetry.Exporter.Geneva.Transports;
@@ -143,17 +144,18 @@ public class UnixUserEventsDataTransportTests
         }
     }
 
-    [Fact(Skip = "This would fail on Ubuntu. Skipping for now. See issue: #2326.")]
+    [Fact]
     public void UserEvents_Logs_Success_Linux()
     {
+        var providerName = "MicrosoftOpenTelemetryLogs";
+        var eventLevel = EventLevel.Informational;
         var listener = new PerfTracepointListener(
-            "MicrosoftOpenTelemetryLogs_L4K1",
+            $"{providerName}_L{(int)eventLevel}K1",
             MetricUnixUserEventsDataTransport.MetricsTracepointNameArgs);
-
-        var logsTracepoint = UnixUserEventsDataTransport.Instance.RegisterUserEventProviderForLogs();
-
         try
         {
+            using var userEventsDataTransport = new UnixUserEventsDataTransport(providerName);
+            var logsTracepoint = userEventsDataTransport.FindLogsTracepoint(eventLevel);
             listener.Enable();
 
             Console.WriteLine("------------- ready to write events -------------");
